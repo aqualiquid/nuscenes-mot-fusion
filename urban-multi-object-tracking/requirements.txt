@@ -1,0 +1,47 @@
+# Urban Multi-Object Tracking Project Requirements
+
+# Core Deep Learning & Computer Vision
+torch>=1.9.0
+torchvision>=0.10.0
+ultralytics>=8.0.0
+
+# Computer Vision & Image Processing
+opencv-python>=4.5.0
+Pillow>=8.3.0
+
+# Data Processing & Scientific Computing
+numpy<2.0.0
+pandas>=1.3.0
+scipy>=1.7.0
+
+# Visualization
+matplotlib>=3.3.0
+seaborn>=0.11.0
+plotly>=5.0.0
+
+# Data Processing Utilities
+tqdm>=4.62.0
+pyyaml>=5.4.0
+
+# nuScenes Dataset
+nuscenes-devkit>=1.1.0
+
+# 3D Point Cloud Processing
+open3d>=0.13.0
+
+# Machine Learning Utilities
+scikit-learn>=1.0.0
+
+# Development & Jupyter
+jupyter>=1.0.0
+ipykernel>=6.0.0
+
+# API & Networking
+requests>=2.25.0
+
+# File Processing
+h5py>=3.1.0
+
+# Optional: For advanced tracking algorithms
+filterpy>=1.4.5
+lap>=0.4.0
