@@ -1,0 +1,4 @@
+urban-multi-object-tracking/data/raw/
+**/__pycache__/
+*.pyc
+*.log
