@@ -25,7 +25,7 @@ class SimpleTracker:
         self.max_disappeared = max_disappeared
         self.max_distance = max_distance
         
-        print(f"🎯 SimpleTracker initialized")
+        print(f"• SimpleTracker initialized")
         print(f"   • Max disappeared frames: {max_disappeared}")
         print(f"   • Max tracking distance: {max_distance} pixels")
     
@@ -37,7 +37,7 @@ class SimpleTracker:
         self.disappeared[self.next_object_id] = 0
         self.object_classes[self.next_object_id] = class_name
         
-        print(f"📝 Registered new object ID: {self.next_object_id} ({class_name})")
+        print(f"• Registered new object ID: {self.next_object_id} ({class_name})")
         self.next_object_id += 1
     
     def deregister(self, object_id):
@@ -240,7 +240,7 @@ def test_tracker():
     """
     Simple test for the tracker
     """
-    print("🧪 Testing SimpleTracker...")
+    print("* Testing SimpleTracker...")
     
     tracker = SimpleTracker(max_disappeared=5, max_distance=50)
     
@@ -267,7 +267,7 @@ def test_tracker():
         stats = tracker.get_stats()
         print(f"Stats: {stats}")
     
-    print("\n✅ Tracker test completed!")
+    print("\n* Tracker test completed!")
 
 if __name__ == "__main__":
     test_tracker()
