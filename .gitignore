@@ -1,4 +1,36 @@
-urban-multi-object-tracking/data/raw/
+# Data directories
+urban-multi-object-tracking/data/
+
+# Results directory
+urban-multi-object-tracking/results/
+
+# Python cache files
 **/__pycache__/
 *.pyc
+**/__init__.py
+
+# Model weights
+*.pt
+yolov8n.pt
+urban-multi-object-tracking/yolov8n.pt
+
+# Media files
+*.jpg
+*.jpeg
+*.png
+*.mp4
+*.avi
+
+# Logs and results
 *.log
+*.json
+
+# OS files
+.DS_Store
+**/.DS_Store
+
+# Setup and config files
+requirement.txt
+download_nuscenes_mini.py
+setup_project.py
+test_*.py

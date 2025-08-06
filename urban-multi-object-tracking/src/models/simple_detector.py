@@ -253,7 +253,7 @@ def test_direct_yolo():
     cap.release()
     cv2.destroyAllWindows()
 
-if __name__ == "__main__":
+if __name__ == "__main__":ㅌ
     print("=== Object Detection Test ===")
     print()
     print("Choose test mode:")
