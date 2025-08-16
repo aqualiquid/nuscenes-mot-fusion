@@ -3,348 +3,330 @@
 
 import numpy as np
 import cv2
-import json
 from pathlib import Path
 
 class CameraLiDARFusion:
-    def __init__(self, data_root="data/raw"):
+    def __init__(self):
         """
-        Camera-LiDAR sensor fusion for object detection
+        Simple Camera-LiDAR Fusion for nuScenes
         """
         print("🔗 Initializing Camera-LiDAR Fusion...")
         
-        self.data_root = Path(data_root)
-        self.calibration_data = None
-        
-        # Load calibration data if available
-        self._load_calibration()
-        
-        # Fusion parameters
-        self.depth_threshold = 2.0    # meters
-        self.roi_expand_ratio = 0.1   # expand detection ROI by 10%
-        
-        print("✅ Camera-LiDAR Fusion ready!")
-    
-    def _load_calibration(self):
-        """
-        Load camera-LiDAR calibration matrices from nuScenes
-        """
-        calib_file = self.data_root / "v1.0-mini" / "calibrated_sensor.json"
-        
-        if calib_file.exists():
-            try:
-                with open(calib_file, 'r') as f:
-                    self.calibration_data = json.load(f)
-                print(f"📊 Loaded calibration data: {len(self.calibration_data)} sensors")
-            except Exception as e:
-                print(f"⚠️  Failed to load calibration: {e}")
-                self._use_default_calibration()
-        else:
-            print("⚠️  No calibration file found, using defaults")
-            self._use_default_calibration()
-    
-    def _use_default_calibration(self):
-        """
-        Use default calibration parameters for nuScenes
-        """
-        # Simplified calibration for nuScenes CAM_FRONT
+        # nuScenes CAM_FRONT approximate parameters
         self.camera_intrinsic = np.array([
             [1266.4, 0, 816.3],
             [0, 1266.4, 491.5],
             [0, 0, 1]
-        ], dtype=np.float32)
+        ])
         
-        # LiDAR to camera transformation (simplified)
-        self.lidar_to_camera = np.array([
-            [0, -1, 0, 0],
-            [0, 0, -1, -1.8],
-            [1, 0, 0, 0],
-            [0, 0, 0, 1]
-        ], dtype=np.float32)
-        
-        print("📐 Using default calibration parameters")
+        print("✅ Camera-LiDAR Fusion ready!")
     
-    def project_lidar_to_camera(self, lidar_points, camera_intrinsic=None, transform_matrix=None):
+    def project_lidar_to_image(self, lidar_points, image_shape):
         """
-        Project LiDAR points to camera image coordinates
+        Project LiDAR points to camera image (simplified for nuScenes)
         
         Args:
-            lidar_points: (N, 3) or (N, 4) array of LiDAR points [x, y, z, intensity]
-            camera_intrinsic: Camera intrinsic matrix (3x3)
-            transform_matrix: LiDAR to camera transformation matrix (4x4)
+            lidar_points: (N, 3) or (N, 4) LiDAR points [x, y, z, intensity]
+            image_shape: (height, width) of camera image
             
         Returns:
-            image_points: (N, 2) array of image coordinates [u, v]
-            depths: (N,) array of depths
-            valid_mask: (N,) boolean mask for points in front of camera
+            image_points: (N, 2) projected image coordinates
+            valid_indices: indices of valid points
         """
-        if camera_intrinsic is None:
-            camera_intrinsic = self.camera_intrinsic
+        if len(lidar_points) == 0:
+            return np.array([]), np.array([])
         
-        if transform_matrix is None:
-            transform_matrix = self.lidar_to_camera
+        # Extract 3D coordinates
+        points_3d = lidar_points[:, :3]
         
-        # Convert to homogeneous coordinates
-        if lidar_points.shape[1] == 3:
-            points_3d = lidar_points
-        else:
-            points_3d = lidar_points[:, :3]  # Use only x, y, z
+        # Simple filtering - keep points in reasonable range
+        # Front direction (x > 0), reasonable side distance (|y| < 50), height (-3 < z < 3)
+        valid_mask = (
+            (points_3d[:, 0] > 1.0) & (points_3d[:, 0] < 80.0) &  # 1-80m ahead
+            (np.abs(points_3d[:, 1]) < 40.0) &                    # within 40m left-right
+            (points_3d[:, 2] > -3.0) & (points_3d[:, 2] < 3.0)    # reasonable height
+        )
         
-        # Add homogeneous coordinate
-        points_homogeneous = np.hstack([points_3d, np.ones((len(points_3d), 1))])
+        valid_points = points_3d[valid_mask]
         
-        # Transform to camera coordinate system
-        camera_points = (transform_matrix @ points_homogeneous.T).T
+        if len(valid_points) == 0:
+            return np.array([]), np.array([])
         
-        # Get depths (z-coordinate in camera frame)
-        depths = camera_points[:, 2]
+        # Simplified coordinate transformation for nuScenes
+        # LiDAR: x=forward, y=left, z=up
+        # Camera: need to transform to camera coordinate system
+        cam_x = valid_points[:, 0]  # depth (forward)
+        cam_y = -valid_points[:, 1]  # horizontal (left becomes right)
+        cam_z = -valid_points[:, 2]  # vertical (up becomes down)
         
-        # Filter points behind camera
-        valid_mask = depths > 0.1  # At least 10cm in front
+        # Perspective projection
+        u = (cam_y / cam_x) * self.camera_intrinsic[0, 0] + self.camera_intrinsic[0, 2]
+        v = (cam_z / cam_x) * self.camera_intrinsic[1, 1] + self.camera_intrinsic[1, 2]
         
-        # Project to image coordinates
-        camera_coords = camera_points[valid_mask, :3]
+        # Filter points within image bounds
+        height, width = image_shape[:2]
+        image_mask = (u >= 0) & (u < width) & (v >= 0) & (v < height)
         
-        if len(camera_coords) == 0:
-            return np.array([]), np.array([]), valid_mask
+        # Get final valid points
+        final_points = np.column_stack([u[image_mask], v[image_mask]])
+        valid_indices = np.where(valid_mask)[0][image_mask]
         
-        # Project using camera intrinsic matrix
-        image_coords = (camera_intrinsic @ camera_coords.T).T
-        
-        # Convert from homogeneous to image coordinates
-        image_points = np.zeros((len(valid_mask), 2))
-        image_points[valid_mask, 0] = image_coords[:, 0] / image_coords[:, 2]  # u
-        image_points[valid_mask, 1] = image_coords[:, 1] / image_coords[:, 2]  # v
-        
-        return image_points, depths, valid_mask
+        return final_points, valid_indices
     
-    def filter_lidar_in_image_roi(self, lidar_points, detection_bbox, image_shape):
+    def get_lidar_in_detection(self, lidar_points, detection_bbox, image_shape):
         """
-        Filter LiDAR points that fall within a 2D detection bounding box
+        Get LiDAR points that fall within a detection bounding box
         
         Args:
-            lidar_points: (N, 3) or (N, 4) array of LiDAR points
-            detection_bbox: [x1, y1, x2, y2] detection bounding box
-            image_shape: (height, width) of the image
+            lidar_points: LiDAR point cloud
+            detection_bbox: [x1, y1, x2, y2] bounding box
+            image_shape: camera image shape
             
         Returns:
-            roi_points: LiDAR points within the ROI
-            roi_indices: Original indices of the ROI points
+            roi_points: LiDAR points in the detection area
+            roi_distances: distances of these points
         """
         # Project LiDAR to image
-        image_points, depths, valid_mask = self.project_lidar_to_camera(lidar_points)
+        image_points, valid_indices = self.project_lidar_to_image(lidar_points, image_shape)
         
         if len(image_points) == 0:
             return np.array([]), np.array([])
         
-        # Extract bounding box
         x1, y1, x2, y2 = detection_bbox
         
-        # Expand ROI slightly
-        expand_x = (x2 - x1) * self.roi_expand_ratio
-        expand_y = (y2 - y1) * self.roi_expand_ratio
+        # Expand bounding box slightly (10% expansion)
+        w, h = x2 - x1, y2 - y1
+        x1_exp = max(0, x1 - w * 0.1)
+        y1_exp = max(0, y1 - h * 0.1)
+        x2_exp = min(image_shape[1], x2 + w * 0.1)
+        y2_exp = min(image_shape[0], y2 + h * 0.1)
         
-        x1_exp = max(0, x1 - expand_x)
-        y1_exp = max(0, y1 - expand_y)
-        x2_exp = min(image_shape[1], x2 + expand_x)
-        y2_exp = min(image_shape[0], y2 + expand_y)
-        
-        # Find points within expanded bounding box
+        # Find points within bounding box
         u_coords = image_points[:, 0]
         v_coords = image_points[:, 1]
         
-        roi_mask = (
+        bbox_mask = (
             (u_coords >= x1_exp) & (u_coords <= x2_exp) &
-            (v_coords >= y1_exp) & (v_coords <= y2_exp) &
-            valid_mask
+            (v_coords >= y1_exp) & (v_coords <= y2_exp)
         )
         
-        roi_indices = np.where(roi_mask)[0]
+        if not np.any(bbox_mask):
+            return np.array([]), np.array([])
+        
+        # Get corresponding 3D points
+        roi_indices = valid_indices[bbox_mask]
         roi_points = lidar_points[roi_indices]
         
-        return roi_points, roi_indices
+        # Calculate distances
+        distances = np.sqrt(roi_points[:, 0]**2 + roi_points[:, 1]**2 + roi_points[:, 2]**2)
+        
+        return roi_points, distances
     
-    def estimate_3d_bbox_from_lidar(self, roi_points):
-        """
-        Estimate 3D bounding box from LiDAR points in ROI
-        
-        Args:
-            roi_points: LiDAR points within detection ROI
-            
-        Returns:
-            bbox_3d: Dictionary with 3D bounding box information
-        """
-        if len(roi_points) < 10:  # Need minimum points for reliable estimation
-            return None
-        
-        points_3d = roi_points[:, :3] if roi_points.shape[1] > 3 else roi_points
-        
-        # Calculate bounding box statistics
-        min_coords = np.min(points_3d, axis=0)
-        max_coords = np.max(points_3d, axis=0)
-        center = (min_coords + max_coords) / 2
-        size = max_coords - min_coords
-        
-        # Calculate distance from origin (camera/ego vehicle)
-        distance = np.linalg.norm(center)
-        
-        # Estimate object properties
-        bbox_3d = {
-            'center': center,
-            'size': size,
-            'distance': distance,
-            'num_points': len(roi_points),
-            'min_coords': min_coords,
-            'max_coords': max_coords
-        }
-        
-        return bbox_3d
-    
-    def fuse_detections(self, camera_detections, lidar_points, image_shape):
+    def fuse_camera_lidar(self, camera_detections, lidar_points, image_shape):
         """
         Fuse camera detections with LiDAR data
         
         Args:
             camera_detections: List of [x1, y1, x2, y2, confidence, class_name]
-            lidar_points: (N, 3) or (N, 4) array of LiDAR points
-            image_shape: (height, width) of camera image
+            lidar_points: LiDAR point cloud
+            image_shape: camera image shape
             
         Returns:
-            fused_detections: Enhanced detections with 3D information
+            fused_detections: Enhanced detections with 3D info
         """
-        print(f"🔗 Fusing {len(camera_detections)} detections with LiDAR data...")
+        print(f"🔗 Fusing {len(camera_detections)} detections with LiDAR...")
         
-        fused_detections = []
+        fused_results = []
         
-        for i, detection in enumerate(camera_detections):
+        for detection in camera_detections:
             x1, y1, x2, y2, confidence, class_name = detection
             
-            # Get LiDAR points in this detection's ROI
-            roi_points, roi_indices = self.filter_lidar_in_image_roi(
+            # Get LiDAR points for this detection
+            roi_points, distances = self.get_lidar_in_detection(
                 lidar_points, [x1, y1, x2, y2], image_shape
             )
             
-            # Estimate 3D bounding box
-            bbox_3d = self.estimate_3d_bbox_from_lidar(roi_points)
-            
-            # Create fused detection
-            fused_detection = {
-                'bbox_2d': [x1, y1, x2, y2],
+            # Create enhanced detection
+            enhanced_detection = {
+                'bbox': [int(x1), int(y1), int(x2), int(y2)],
                 'confidence': confidence,
                 'class_name': class_name,
-                'lidar_points': roi_points,
-                'bbox_3d': bbox_3d,
-                'roi_indices': roi_indices
+                'lidar_points': len(roi_points),
+                'has_lidar_support': len(roi_points) > 0
             }
             
-            # Add reliability score based on LiDAR support
-            if bbox_3d is not None:
-                fused_detection['fusion_confidence'] = min(1.0, bbox_3d['num_points'] / 100.0)
-                fused_detection['distance'] = bbox_3d['distance']
+            # Add distance information if LiDAR support exists
+            if len(distances) > 0:
+                enhanced_detection['distance'] = float(np.mean(distances))
+                enhanced_detection['min_distance'] = float(np.min(distances))
+                enhanced_detection['max_distance'] = float(np.max(distances))
+                enhanced_detection['fusion_quality'] = min(1.0, len(roi_points) / 50.0)  # 0-1 scale
             else:
-                fused_detection['fusion_confidence'] = 0.0
-                fused_detection['distance'] = float('inf')
+                enhanced_detection['distance'] = float('inf')
+                enhanced_detection['fusion_quality'] = 0.0
             
-            fused_detections.append(fused_detection)
+            fused_results.append(enhanced_detection)
         
-        # Sort by fusion confidence (best LiDAR support first)
-        fused_detections.sort(key=lambda x: x['fusion_confidence'], reverse=True)
+        # Sort by fusion quality (better LiDAR support first)
+        fused_results.sort(key=lambda x: x['fusion_quality'], reverse=True)
         
-        print(f"✅ Fusion complete. {sum(1 for d in fused_detections if d['bbox_3d'] is not None)} detections have 3D support")
+        successful_fusions = sum(1 for det in fused_results if det['has_lidar_support'])
+        print(f"✅ Fusion complete: {successful_fusions}/{len(fused_results)} detections have LiDAR support")
         
-        return fused_detections
+        return fused_results
     
-    def visualize_fusion(self, image, fused_detections, lidar_points=None):
+    def visualize_fusion(self, image, fused_detections, lidar_points):
         """
-        Visualize fused detections on camera image
+        Visualize fusion results
         """
         result_image = image.copy()
         
-        # Project all LiDAR points to image (for background)
-        if lidar_points is not None:
-            image_points, depths, valid_mask = self.project_lidar_to_camera(lidar_points)
+        # Project and draw LiDAR points as background
+        image_points, valid_indices = self.project_lidar_to_image(lidar_points, image.shape)
+        
+        # Draw LiDAR points colored by distance
+        for i, (u, v) in enumerate(image_points):
+            original_idx = valid_indices[i]
+            distance = np.sqrt(np.sum(lidar_points[original_idx, :3]**2))
             
-            # Draw LiDAR points as small dots
-            for i, (u, v) in enumerate(image_points[valid_mask]):
-                if 0 <= u < image.shape[1] and 0 <= v < image.shape[0]:
-                    depth = depths[valid_mask][i]
-                    # Color by depth (blue=close, red=far)
-                    color_intensity = min(255, int(depth * 10))
-                    cv2.circle(result_image, (int(u), int(v)), 1, (color_intensity, 0, 255-color_intensity), -1)
+            # Color by distance: green=close, yellow=medium, red=far
+            if distance < 20:
+                color = (0, 255, 0)  # Green
+            elif distance < 40:
+                color = (0, 255, 255)  # Yellow
+            else:
+                color = (0, 0, 255)  # Red
+            
+            cv2.circle(result_image, (int(u), int(v)), 1, color, -1)
         
         # Draw fused detections
         for detection in fused_detections:
-            x1, y1, x2, y2 = [int(c) for c in detection['bbox_2d']]
+            x1, y1, x2, y2 = detection['bbox']
             confidence = detection['confidence']
             class_name = detection['class_name']
-            fusion_conf = detection['fusion_confidence']
             
             # Color based on fusion quality
-            if fusion_conf > 0.5:
-                color = (0, 255, 0)  # Green for good fusion
-            elif fusion_conf > 0.2:
-                color = (0, 255, 255)  # Yellow for medium fusion
+            if detection['has_lidar_support']:
+                if detection['fusion_quality'] > 0.5:
+                    bbox_color = (0, 255, 0)  # Green - good fusion
+                else:
+                    bbox_color = (0, 255, 255)  # Yellow - medium fusion
             else:
-                color = (0, 0, 255)  # Red for poor fusion
+                bbox_color = (0, 0, 255)  # Red - no LiDAR support
             
             # Draw bounding box
-            cv2.rectangle(result_image, (x1, y1), (x2, y2), color, 2)
+            cv2.rectangle(result_image, (x1, y1), (x2, y2), bbox_color, 3)
             
-            # Draw label with fusion information
-            if detection['bbox_3d'] is not None:
-                distance = detection['distance']
-                num_points = detection['bbox_3d']['num_points']
-                label = f"{class_name} {confidence:.2f} | {distance:.1f}m ({num_points}pts)"
+            # Create label
+            if detection['has_lidar_support']:
+                label = f"{class_name} {confidence:.2f} | {detection['distance']:.1f}m ({detection['lidar_points']}pts)"
             else:
                 label = f"{class_name} {confidence:.2f} | No LiDAR"
             
-            # Label background
-            (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-            cv2.rectangle(result_image, (x1, y1-text_height-10), (x1+text_width, y1), color, -1)
+            # Draw label background
+            (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+            cv2.rectangle(result_image, (x1, y1-text_height-10), (x1+text_width, y1), bbox_color, -1)
             
-            # Label text
-            cv2.putText(result_image, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            # Draw label text
+            cv2.putText(result_image, label, (x1, y1-5), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        # Add summary info
+        total_detections = len(fused_detections)
+        successful_fusions = sum(1 for det in fused_detections if det['has_lidar_support'])
+        lidar_points_shown = len(image_points)
+        
+        summary = f"Detections: {total_detections} | LiDAR Support: {successful_fusions} | Points: {lidar_points_shown}"
+        cv2.putText(result_image, summary, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
         
         return result_image
 
-# Test function
 def test_fusion():
     """
-    Test camera-LiDAR fusion with dummy data
+    Test fusion with real nuScenes data
     """
     print("🧪 Testing Camera-LiDAR Fusion...")
     
+    # Import required modules
+    import sys, os
+    sys.path.insert(0, os.path.join(os.getcwd(), '..', '..'))
+    
+    try:
+        from simple_detector import SimpleDetector
+        from lidar_processor import LiDARProcessor
+    except ImportError:
+        print("❌ Cannot import required modules")
+        print("Make sure you're running from the right directory")
+        return
+    
+    # Initialize components
     fusion = CameraLiDARFusion()
+    detector = SimpleDetector()
+    lidar_proc = LiDARProcessor()
     
-    # Create dummy data
-    dummy_image = np.zeros((900, 1600, 3), dtype=np.uint8)
+    # Find data files
+    data_dir = Path("../../data/raw/samples")
+    camera_dir = data_dir / "CAM_FRONT"
+    lidar_dir = data_dir / "LIDAR_TOP"
     
-    # Dummy camera detections
-    dummy_detections = [
-        [400, 300, 600, 500, 0.9, 'car'],
-        [800, 200, 1000, 400, 0.8, 'person']
-    ]
+    if not (camera_dir.exists() and lidar_dir.exists()):
+        print("❌ Data directories not found")
+        print(f"Looking for: {camera_dir} and {lidar_dir}")
+        return
     
-    # Dummy LiDAR points (some points near the detections)
-    dummy_lidar = np.array([
-        [10, 2, 0.5, 100],    # Points for first detection
-        [12, 2, 0.8, 120],
-        [11, 1.5, 0.6, 110],
-        [20, -1, 1.2, 80],    # Points for second detection
-        [21, -0.8, 1.0, 90],
-        [5, 5, 0, 150],       # Background points
-        [30, 10, -0.5, 60]
-    ])
+    # Get first files
+    camera_files = sorted(list(camera_dir.glob("*.jpg")))
+    lidar_files = sorted(list(lidar_dir.glob("*.pcd.bin")))
     
-    # Test fusion
-    fused_detections = fusion.fuse_detections(dummy_detections, dummy_lidar, dummy_image.shape[:2])
+    if not camera_files or not lidar_files:
+        print("❌ No data files found")
+        return
     
-    print(f"✅ Fusion test completed!")
-    print(f"📊 Input: {len(dummy_detections)} camera detections")
-    print(f"📊 Output: {len(fused_detections)} fused detections")
+    print(f"📊 Testing with first files:")
+    print(f"  📷 Camera: {camera_files[0].name}")
+    print(f"  📡 LiDAR: {lidar_files[0].name}")
     
-    for i, det in enumerate(fused_detections):
-        print(f"  Detection {i+1}: {det['class_name']} (fusion_conf: {det['fusion_confidence']:.2f})")
+    # Load data
+    image = cv2.imread(str(camera_files[0]))
+    lidar_points = lidar_proc.load_point_cloud(lidar_files[0])
+    
+    if image is None or lidar_points is None:
+        print("❌ Failed to load data")
+        return
+    
+    # Process
+    filtered_lidar = lidar_proc.filter_points(lidar_points)
+    camera_detections = detector.detect_objects(image)
+    
+    print(f"📊 Data loaded:")
+    print(f"  Image: {image.shape}")
+    print(f"  LiDAR: {len(lidar_points)} → {len(filtered_lidar)} points")
+    print(f"  Detections: {len(camera_detections)}")
+    
+    # Fusion
+    fused_detections = fusion.fuse_camera_lidar(camera_detections, filtered_lidar, image.shape)
+    
+    # Visualize
+    result_image = fusion.visualize_fusion(image, fused_detections, filtered_lidar)
+    
+    # Save result
+    results_dir = Path("../../results/fusion_test")
+    results_dir.mkdir(parents=True, exist_ok=True)
+    
+    output_file = results_dir / "fusion_test_result.jpg"
+    cv2.imwrite(str(output_file), result_image)
+    
+    print(f"✅ Test completed!")
+    print(f"💾 Result saved: {output_file}")
+    
+    # Print detailed results
+    print(f"\n📊 Detailed Results:")
+    for i, det in enumerate(fused_detections[:3]):  # Show top 3
+        print(f"  {i+1}. {det['class_name']} (conf: {det['confidence']:.2f})")
+        if det['has_lidar_support']:
+            print(f"     Distance: {det['distance']:.1f}m ({det['lidar_points']} points)")
+        else:
+            print(f"     No LiDAR support")
 
 if __name__ == "__main__":
     test_fusion()
