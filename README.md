@@ -99,8 +99,8 @@ The system demonstrates significant improvements in object detection and trackin
 - [x] LiDAR point cloud processing
 - [x] Camera-LiDAR sensor fusion
 - [x] Simple object tracking
-- [ ] Bird's Eye View (BEV) generation
-- [ ] BEV multi-object detection
+- [x] Bird's Eye View (BEV) generation
+- [x] BEV multi-object detection
 - [ ] Advanced tracking algorithms
 - [ ] Performance optimization
 - [ ] Real-time deployment
